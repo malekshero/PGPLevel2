@@ -1,5 +1,6 @@
 package sample;
 
+import java.io.FileInputStream;
 import java.security.*;
 import java.util.Base64;
 
@@ -22,14 +23,15 @@ import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.event.ActionEvent;
 
+import javax.crypto.Cipher;
+
 
 public class Client {
-    public static PublicKey getPublicKey(String publicKeyAsString, GenerateKeys gk) throws Exception
-    {
-        byte[] publicKeyBytes =Base64.getDecoder().decode(publicKeyAsString);
+    public static PublicKey getPublicKey(String publicKeyAsString, GenerateKeys gk) throws Exception {
+        byte[] publicKeyBytes = Base64.getDecoder().decode(publicKeyAsString);
         PublicKey publicKey = gk.getPublic(publicKeyBytes);
 
-        return  publicKey;
+        return publicKey;
     }
 
     public static String generateRandomString() {
@@ -98,9 +100,31 @@ public class Client {
                 ///encrypted with RC4 randomkey key
                 byte[] encrypted = rc4.encrypt(remit.toString(), randomKey);
 
+
+
+
+
+
+/////////////////////
+                PrivateKey privateKey = gk.getPrivateKey();
+                PublicKey signaturePublicKey = gk.getPublicKey();
+                String publicKey1 = Base64.getEncoder().encodeToString(signaturePublicKey.getEncoded());
+                MessageDigest md = MessageDigest.getInstance("SHA-256");
+                byte[] messageHash = md.digest(encrypted);
+
+
+                Cipher cipher = Cipher.getInstance("RSA");
+                cipher.init(Cipher.ENCRYPT_MODE, privateKey);
+                byte[] digitalSignature = cipher.doFinal(messageHash);
+
+                outStream.writeInt(digitalSignature.length);
+                outStream.write(digitalSignature);
+                outStream.writeUTF(publicKey1);
+
+///////////////////////
                 // Encrypt Client Key By Using Public Key Of Client
                 // convert from string to public key
-                PublicKey publicKey = getPublicKey(PublicKeyFromServer,gk);
+                PublicKey publicKey = getPublicKey(PublicKeyFromServer, gk);
                 byte[] encryptRC4KeyUsingRSA = rsa.encrypt(randomKey.getBytes(), publicKey);
 
                 //send encrypted data using random key in rc4
@@ -111,6 +135,7 @@ public class Client {
                 outStream.writeInt(encryptRC4KeyUsingRSA.length);
                 outStream.write(encryptRC4KeyUsingRSA);
 
+                // send digitalSignature
 
                 // Read a message from the server about the state of transactions
                 String feedbacktext = inStream.readUTF();

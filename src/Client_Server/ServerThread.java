@@ -5,29 +5,33 @@ import Encrypte_Decrypte_RSA.RSA;
 import Encypte_Decrypt_RC4.SymmetricClient;
 import org.json.simple.parser.*;
 import org.json.simple.JSONObject;
+
+import javax.crypto.Cipher;
 import java.net.*;
 import java.io.*;
 import java.nio.charset.Charset;
+import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.security.Signature;
+import java.util.Arrays;
 import java.util.Base64;
 
 
 class ServerThread extends Thread {
     /// get make String privateKey who taked from database as a Real private key
-    public static PrivateKey getPrivateKey(String privateKeyAsString, GenerateKeys gk) throws Exception
-    {
+    public static PrivateKey getPrivateKey(String privateKeyAsString, GenerateKeys gk) throws Exception {
         byte[] privateKeyBytes = Base64.getDecoder().decode(privateKeyAsString);
         PrivateKey privateKey = gk.getPrivate(privateKeyBytes);
 
-        return  privateKey;
+        return privateKey;
     }
-    public static PublicKey getPublicKey(String publicKeyAsString, GenerateKeys gk) throws Exception
-    {
-        byte[] publicKeyBytes =Base64.getDecoder().decode(publicKeyAsString);
+
+    public static PublicKey getPublicKey(String publicKeyAsString, GenerateKeys gk) throws Exception {
+        byte[] publicKeyBytes = Base64.getDecoder().decode(publicKeyAsString);
         PublicKey publicKey = gk.getPublic(publicKeyBytes);
 
-        return  publicKey;
+        return publicKey;
     }
 
     public static boolean isPureAscii(String v) {
@@ -59,12 +63,20 @@ class ServerThread extends Thread {
 
             PublicKey pubkey = gk.getPublicKey();
             PrivateKey prikey = gk.getPrivateKey();
-            String publicKey1=Base64.getEncoder().encodeToString(pubkey.getEncoded());
-            String privateKey1=Base64.getEncoder().encodeToString(prikey.getEncoded());
+            String publicKey1 = Base64.getEncoder().encodeToString(pubkey.getEncoded());
+            String privateKey1 = Base64.getEncoder().encodeToString(prikey.getEncoded());
 
             outStream.writeUTF(publicKey1);
-            dbc.insertClientKeysToDB(publicKey1,privateKey1,name);
+            dbc.insertClientKeysToDB(publicKey1, privateKey1, name);
+
             // read length of incoming data that encrypted by RC4
+
+
+            int digitalSignaturelength = inStream.readInt();
+            byte[] digitalSignature = new byte[digitalSignaturelength];
+            inStream.readFully(digitalSignature, 0, digitalSignaturelength);
+
+            String publicKeyFromClient = inStream.readUTF();
 
             int lengthofRC4 = inStream.readInt();
 
@@ -77,12 +89,22 @@ class ServerThread extends Thread {
             int lengthofRSA = inStream.readInt();
             // read encrypted key by RSA
             byte[] encryptedRc4KeyUsinRSAprivateKey = new byte[lengthofRSA];
-           // System.out.println("we recived length of rsa and its :" + lengthofRSA);
+            // System.out.println("we recived length of rsa and its :" + lengthofRSA);
             inStream.readFully(encryptedRc4KeyUsinRSAprivateKey, 0, encryptedRc4KeyUsinRSAprivateKey.length); // read byte array from JSON
             ///
 
+            Cipher cipher = Cipher.getInstance("RSA");
+            PublicKey publicKey = getPublicKey(publicKeyFromClient, gk);
+            cipher.init(Cipher.DECRYPT_MODE, publicKey);
+            byte[] decryptedMessageHash = cipher.doFinal(digitalSignature);
+
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] newMessageHash = md.digest(Transaction);
+            boolean isCorrect = Arrays.equals(decryptedMessageHash, newMessageHash);
+
             // decrypte RC4 key using RSA privateKey
             byte[] deycrptedKey = rsa.decrypt(encryptedRc4KeyUsinRSAprivateKey, prikey);
+
 
             // dycrpte message Transaction using RC4 key
 
@@ -101,29 +123,31 @@ class ServerThread extends Thread {
                 String sender_name = (String) json.get("name");
                 String describtion = (String) json.get("describtion");
                 String getNameByUserId = dbc.getNamebySenderID(sender_name, sender_id);
+                if (isCorrect == true) {
+                    if (getNameByUserId.equals("Done")) {
+                        //send data to db
+                        String valueTest = dbc.Transfer_money(sender_id, reciver_id, remittance_id);
+                        if (valueTest.equals("Done")) {
 
-                if (getNameByUserId.equals("Done")) {
-                    //send data to db
-                   String valueTest = dbc.Transfer_money(sender_id, reciver_id, remittance_id);
-                   if(valueTest.equals("Done")) {
-                       // return server answer to the client
-                       outStream.writeUTF(getNameByUserId);
-                       dbc.insertTransactionToDB(sender_id, reciver_id, remittance_id, describtion);
-                   }
-                   else
-                   {
-                       outStream.writeUTF(valueTest);
-                   }
+                            // return server answer to the client
+                            outStream.writeUTF(getNameByUserId);
+                            dbc.insertTransactionToDB(sender_id, reciver_id, remittance_id, describtion);
+                        } else {
+                            outStream.writeUTF(valueTest);
+                        }
+                    } else {
+                        outStream.writeUTF(getNameByUserId);
+                    }
                 } else {
-                    outStream.writeUTF(getNameByUserId);
+                    outStream.writeUTF("Error ID");
                 }
-            } else outStream.writeUTF("Error ID");
+            }else outStream.writeUTF("Digital signature Error");
 
             outStream.flush();
             inStream.close();
             outStream.close();
             socket.close();
-            if(prikey == null || pubkey == null){
+            if (prikey == null || pubkey == null) {
                 System.out.println();
             }
         } catch (Exception ex) {
